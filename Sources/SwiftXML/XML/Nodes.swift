@@ -1206,20 +1206,89 @@ public protocol XTextualContentRepresentation {
     var value: String { get set }
 }
 
-public protocol XContentLike {}
+/// Solution: give XContentLike instances ability to be added to XNodeSampler.
+/// XContentLike protocol can not be normally conformed / implemented outside library because XNodeSampler.appendNode(_ node: XContent) function and initializer are internal.
+/// Additionally an `InternalUsageLimiter` with private init is added. Instances of `InternalUsageLimiter` can't be constructed outside the library.
+public protocol XContentLike {
+    func addToSampler(_ sampler: XNodeSampler)
+    
+    var __internal_usage_limiter: InternalUsageLimiter { get }
+}
 
-extension XContent: XContentLike {}
+public struct InternalUsageLimiter {
+    internal static let instance = Self()
+    
+    private init() {}
+}
 
-extension String: XContentLike {}
+extension XContent: XContentLike {
+    public func addToSampler(_ sampler: XNodeSampler) {
+        sampler.appendNode(self)
+    }
+    
+    public var __internal_usage_limiter: InternalUsageLimiter { .instance }
+}
 
-extension XContentSequence: XContentLike {}
-extension XElementSequence: XContentLike {}
-extension XTextSequence: XContentLike {}
-extension XContentLikeSequence: XContentLike {}
-extension LazyMapSequence<XContentSequence, XContentLike>: XContentLike {}
-extension LazyFilterSequence<XContentSequence>: XContentLike {}
+extension String: XContentLike {
+    public func addToSampler(_ sampler: XNodeSampler) {
+        sampler.appendNode(XText(self))
+    }
+    
+    public var __internal_usage_limiter: InternalUsageLimiter { .instance }
+}
 
-extension Array: XContentLike where Element == XContentLike? {}
+extension XContentSequence: XContentLike {
+    public func addToSampler(_ sampler: XNodeSampler) {
+        self.forEach { sampler.appendNode($0) }
+    }
+    
+    public var __internal_usage_limiter: InternalUsageLimiter { .instance }
+}
+extension XElementSequence: XContentLike {
+    public func addToSampler(_ sampler: XNodeSampler) {
+        self.forEach { sampler.appendNode($0) }
+    }
+    
+    public var __internal_usage_limiter: InternalUsageLimiter { .instance }
+}
+extension XTextSequence: XContentLike {
+    public func addToSampler(_ sampler: XNodeSampler) {
+        self.forEach { sampler.appendNode($0) }
+    }
+    
+    public var __internal_usage_limiter: InternalUsageLimiter { .instance }
+}
+extension XContentLikeSequence: XContentLike {
+    public func addToSampler(_ sampler: XNodeSampler) {
+        self.forEach { $0.addToSampler(sampler) }
+    }
+    
+    public var __internal_usage_limiter: InternalUsageLimiter { .instance }
+}
+extension LazyMapSequence<XContentSequence, XContentLike>: XContentLike {
+    public func addToSampler(_ sampler: XNodeSampler) {
+        self.forEach { $0.addToSampler(sampler) }
+    }
+    
+    public var __internal_usage_limiter: InternalUsageLimiter { .instance }
+}
+extension LazyFilterSequence<XContentSequence>: XContentLike {
+    public func addToSampler(_ sampler: XNodeSampler) {
+        self.forEach { sampler.appendNode($0) }
+    }
+    
+    public var __internal_usage_limiter: InternalUsageLimiter { .instance }
+}
+
+extension Array: XContentLike where Element == XContentLike? {
+    public func addToSampler(_ sampler: XNodeSampler) {
+        self.forEach {
+            if let contentLike = $0 { contentLike.addToSampler(sampler) }
+        }
+    }
+    
+    public var __internal_usage_limiter: InternalUsageLimiter { .instance }
+}
 
 public extension Array where Element == XContentLike? {
     var asContent: XContentLikeSequence {
@@ -1323,47 +1392,118 @@ public extension LazyFilterSequence where Base == XContentSequence {
     }
 }
 
-final class XNodeSampler {
+public final class XNodeSampler {
+    internal private(set) var nodes = [XContent]()
 
-    var nodes = [XContent]()
+    internal func appendNode(_ node: XContent) { nodes.append(node) }
+    
+    internal init() {}
+    
+//    internal func add(_ thing: XContentLike) {
+//        if let node = thing as? XContent {
+//            nodes.append(node)
+//        } else if let s = thing as? String {
+//            nodes.append(XText(s))
+//        } else if let sequence = thing as? XContentSequence {
+//            sequence.forEach { self.add($0) }
+//        } else if let sequence = thing as? XElementSequence {
+//            sequence.forEach { self.add($0) }
+//        } else if let sequence = thing as? XTextSequence {
+//            sequence.forEach { self.add($0) }
+//        } else if let sequence = thing as? XContentLikeSequence {
+//            sequence.forEach { self.add($0) }
+//        } else if let array = thing as? [XContentLike?] {
+//            array.forEach { if let contentLike = $0 { self.add(contentLike) } }
+//        } else if let sequence = thing as? LazyMapSequence<XContentSequence, XContentLike> {
+//            sequence.forEach { self.add($0) }
+//        } else if let sequence = thing as? LazyFilterSequence<XContentSequence> {
+//            sequence.forEach { self.add($0) }
+//        } else {
+//            fatalError("unkown content for XNodeSampler: \(type(of: thing)) \(thing)")
+//        }
+//    }
+}
 
-    func add(_ thing: XContentLike) {
-        if let node = thing as? XContent {
-            nodes.append(node)
-        } else if let s = thing as? String {
-            nodes.append(XText(s))
-        } else if let sequence = thing as? XContentSequence {
-            sequence.forEach { self.add($0) }
-        } else if let sequence = thing as? XElementSequence {
-            sequence.forEach { self.add($0) }
-        } else if let sequence = thing as? XTextSequence {
-            sequence.forEach { self.add($0) }
-        } else if let sequence = thing as? XContentLikeSequence {
-            sequence.forEach { self.add($0) }
-        } else if let array = thing as? [XContentLike?] {
-            array.forEach { if let contentLike = $0 { self.add(contentLike) } }
-        } else if let sequence = thing as? LazyMapSequence<XContentSequence, XContentLike> {
-            sequence.forEach { self.add($0) }
-        } else if let sequence = thing as? LazyFilterSequence<XContentSequence> {
-            sequence.forEach { self.add($0) }
-        } else {
-            fatalError("unkown content for XNodeSampler: \(type(of: thing)) \(thing)")
+// _________________________________________
+// test
+
+func builTestDoc() {
+    let myElement = XElement("div") {
+        XElement("hr")
+        XElement("paragraph") {
+            "Hello World"
         }
+        XElement("hr")
+        
+        "somText"
+        
+        XText("this is text")
     }
 }
 
+// _____
+
+/// Possible further improvements.
+///
+/// Move `func addToSampler(_ sampler: XNodeSampler)` from XContentLike to another protocol. Finally there are two protocols:
+/// ```
+/// public protocol XContentLike { // hide addToSampler func from public api
+///     var __internal_usage_limiter: InternalUsageLimiter { get }
+/// }
+///
+/// internal protocol XContentLike_Appendable {
+///     func (_ sampler: XNodeSampler)
+/// }
+/// ```
+/*
+public protocol XContentLike {
+    var __internal_usage_limiter: InternalUsageLimiter { get }
+}
+
+internal protocol XContentLike_Appendable: XContentLike {
+    func addToSampler(_ sampler: XNodeSampler)
+}
+
+public struct InternalUsageLimiter {
+    internal let instance: any XContentLike & XContentLike_Appendable
+    
+    fileprivate init(_ instance: any XContentLike & XContentLike_Appendable) {
+        self.instance = instance
+    }
+}
+
+extension XContent: XContentLike, XContentLike_Appendable {
+    internal func addToSampler(_ sampler: XNodeSampler) {
+        sampler.appendNode(self)
+    }
+    
+    public var __internal_usage_limiter2: InternalUsageLimiter { .init(self) }
+}
+
+ extension String: XContentLike {
+ extension XContentSequence: XContentLike {
+
+extension XContentBuilder {
+    public static func buildBlock(_ components: (any XContentLike)?...) -> [XContent] {
+        let sampler = XNodeSampler()
+        components.forEach { if let nodeLike = $0 { nodeLike.__internal_usage_limiter.instance.addToSampler(sampler) } }
+        return sampler.nodes
+    }
+}
+*/
+// ____
+
 @resultBuilder
 public struct XContentBuilder {
-
-    public static func buildBlock(_ components: XContentLike?...) -> [XContent] {
+    public static func buildBlock(_ components: (any XContentLike)?...) -> [XContent] {
         let sampler = XNodeSampler()
-        components.forEach { if let nodeLike = $0 { sampler.add(nodeLike) } }
+        components.forEach { if let nodeLike = $0 { nodeLike.addToSampler(sampler) } }
         return sampler.nodes
     }
 
     public static func buildBlock<T: XContent>(_ sequences: any Sequence<T>...) -> [XContent] {
         let sampler = XNodeSampler()
-        sequences.forEach{ $0.forEach { sampler.add($0 as! XContent) } }
+        sequences.forEach { $0.forEach { ($0 as! XContent).addToSampler(sampler) } }
         return sampler.nodes
     }
 
@@ -1374,7 +1514,6 @@ public struct XContentBuilder {
     public static func buildEither(second component: [XContent]) -> [XContent] {
         component
     }
-
 }
 
 public final class XElement: XContent, XBranchInternal, CustomStringConvertible {
